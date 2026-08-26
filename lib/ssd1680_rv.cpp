@@ -10,12 +10,11 @@
 #include "../var/config.h"
 
 
-// Constructeur
 SSD1680::SSD1680(spi_inst_t &spiInstance
             , int cs, int dc, int rst, int busy, int clk, int mosi
             , int height , int width, int freq) 
         {
-            spi = &spiInstance; // Stocke le pointeur SPI
+            spi = &spiInstance;
             csPin = cs;
             dcPin = dc;
             rstPin = rst;
@@ -46,7 +45,7 @@ SSD1680::SSD1680(spi_inst_t &spiInstance
             command(CMD_ConfigUpdate, &last_config_screen, 1);
         }
 
-// Destructeur
+        
 SSD1680::~SSD1680() {
     delete[] bufferImg_now;
     delete[] bufferImg_before;
@@ -54,12 +53,6 @@ SSD1680::~SSD1680() {
 }
 
 
-
-void SSD1680::writeImg(const uint8_t* img){
-    std::memcpy(bufferImg_now, img, bufferSize * sizeof(uint8_t));
-    compensation_grey();
-    grey_update();
-}
 
 
 
@@ -313,6 +306,14 @@ void SSD1680::command(uint8_t cmd_, const uint8_t *data, int data_size){
 
         
 /* -------------- Buffer images  -------------- */
+
+void SSD1680::writeImg(const uint8_t* img){
+    std::memcpy(bufferImg_now, img, bufferSize * sizeof(uint8_t));
+    compensation_grey();
+    grey_update();
+}
+
+
 void SSD1680::moveBufferImg(bool copyOnNew){
     /* Exchange pos buffer */
     uint8_t* tmp_buffer = bufferImg_before;
@@ -329,7 +330,6 @@ void SSD1680::sendBufferImg(){
     command(CMD_WriteRamRED, bufferImg_before, bufferSize);
     command(CMD_WriteRamBW, bufferImg_now, bufferSize);
 }
-
 
 void SSD1680::sendCompensateImg(){
     command(CMD_WriteRamRED, bufferImg_compensate_negatif, bufferSize);
@@ -359,28 +359,33 @@ bool SSD1680::gestionAnalog(uint8_t *cmd_, const uint8_t *data ){
 }
 
 void SSD1680::enableAnalog(){
+    // Turn on high-voltage circuitry to allow pixel driving
+    // Must stay enabled during rapid & continuous updates to maintain speed
     uint8_t data_temp[1]{ DATA_EnableAnalog };
     command(CMD_ConfigUpdate, data_temp, 1);
     command(CMD_StartUpdate);
-    printf("###ENABLE ANALOGUE###");
 }
 
 void SSD1680::disableAnalog(){
+    // Cut high-voltage power to save energy once display update is done
     uint8_t data_temp[1]{ DATA_DisableAnalog };
     command(CMD_ConfigUpdate, data_temp, 1);
     command(CMD_StartUpdate);
-    printf("###ENABLE ANALOGUE###");
 }
 
+
 void SSD1680::temperature_init(){
-    /* 
-        Ressemble a un BUG. 
-        Si on change la valeur ou si on remet le capteur interne c'est impossible a reproduire ce "bug" de vitesse
-        casse peut etre le moment ou l'écran recherche une LUT ?
+    /* Looks like a controller bug:
+        - Sending 0x00 (undocumented value) skyrockets the update speed.
+        - Seems to completely disable thermal compensation.
+        - Breaks standard updates using the default LUT.
+        - ONLY works during boot initialization.
+        - If switched back to internal/external sensor, impossible to reproduce without a hard reset.
     */
     uint8_t data_temp[1] {0x00};
-    command(CMD_TemperatureSensorControl, data_temp, sizeof(data_temp)); // Read exterior sensor (no exist, insert fake value for speed)
+    command(CMD_TemperatureSensorControl, data_temp, sizeof(data_temp)); // Configure temperature control to a value not exist
 }
+
 
 
 
@@ -421,7 +426,7 @@ void SSD1680::updateAnalyseScreen()
                 }
             }
 
-            // Saturation dans la plage [-127, 127]
+            // limit 127 -> data has storage in int8_t
             if (q > 127) q = 127;
             if (q < -127) q = -127;
 
@@ -500,20 +505,20 @@ void SSD1680::stop_greyCompensation(){
 }
 
 
-// Used for try to compensate change between grey and black img
-// can provoc glich visual on black white image
 
 void SSD1680::grey_update(){
     // Detection of grey color
     if(grey_compensation){
         for (size_t i = 0; i < bufferSize; ++i) {
-            grey_detected[i] = (bufferImg_before[i] ^ bufferImg_between[i]) & (bufferImg_between[i] ^ bufferImg_now[i]); /* need to patern 0-1-0 or 1-0-1 */
+            /* grey = need to patern 0-1-0 or 1-0-1 */
+            grey_detected[i] = (bufferImg_before[i] ^ bufferImg_between[i]) & (bufferImg_between[i] ^ bufferImg_now[i]);
         }
     }
 }
 
 void SSD1680::compensation_grey(){
-    // application of compensation
+    // Used for try to compensate change between grey and black img
+    // can provoc glich visual on black white image
     if(grey_compensation){
         for (size_t i = 0; i < bufferSize; ++i) {
             /* if not grey -> Not change */
