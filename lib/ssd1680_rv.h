@@ -11,26 +11,24 @@ class SSD1680 {
 
     private:
         spi_inst_t *spi;
-        dma_channel_config dma;
-        int dma_channel;
-        int csPin;
-        int dcPin;
-        int rstPin;
-        int busyPin;
+        int cs_pin;
+        int dc_pin;
+        int rst_pin;
+        int busy_pin;
 
-        int screenHeight;
-        int screenWidth;
+        int screen_height;
+        int screen_width;
 
-        LUT lutValue;
+        LUT lut_value;
 
-        uint8_t* bufferImg_now;
-        uint8_t* bufferImg_before;
-        uint8_t* bufferImg_between;
-        size_t bufferSize;
+        uint8_t* buffer_img_now;
+        uint8_t* buffer_img_before;
+        uint8_t* buffer_img_between;
+        size_t buffer_size;
 
-        int8_t* analyse_screen_img;
-        uint8_t* bufferImg_compensate_negatif;
-        uint8_t* bufferImg_compensate_positif;
+        int8_t* buffer_accumulated_charge;
+        uint8_t* buffer_img_compensate_negative;
+        uint8_t* buffer_img_compensate_positive;
 
 
         uint8_t last_config_screen;
@@ -45,7 +43,7 @@ class SSD1680 {
         SSD1680(spi_inst_t &spiInstance
                     , int cs, int dc, int rst, int busy, int clk, int mosi
                     , int height , int width
-                    , int freq = 20 * 1000 * 1000);
+                    , int freq = 21 * 1000 * 1000);
 
         ~SSD1680(); // Destructeur
         
@@ -62,14 +60,12 @@ class SSD1680 {
 
         void updateAlreadyLut();
 
-        void updateLutValue(int temperature);
-
-        void end_update() { disableAnalog(); }
+        void endUpdate();
 
 
         /* -------------- Grey -------------- */
-        void start_greyCompensation();
-        void stop_greyCompensation();
+        void startGreyCompensation();
+        void stopGreyCompensation();
 
 
     private:
@@ -102,7 +98,7 @@ class SSD1680 {
         
         /* -------------- Buffer images  -------------- */
 
-        void moveBufferImg(bool copyOnNew = true);
+        void moveBufferImg(bool copy_on_new = true);
 
         void sendBufferImg();
 
@@ -111,21 +107,21 @@ class SSD1680 {
 
         /* -------------- ControlScreen  -------------- */
 
-        bool gestionAnalog(uint8_t *cmd_, const uint8_t *data );
+        bool manageAnalog(uint8_t *cmd_, const uint8_t *data );
 
         void enableAnalog();
         void disableAnalog();
 
-        void temperature_init();
+        void temperatureInit();
 
 
         /* -------------- CompensateScreen  -------------- */
 
-        void updateAnalyseScreen();
+        void updateAccumulateChargeScreen();
         void generateCompensationBuffers();
 
-        void grey_update();
-        void compensation_grey();
+        void greyUpdate();
+        void compensationGrey();
 
 };
 

@@ -13,56 +13,65 @@
 SSD1680::SSD1680(spi_inst_t &spiInstance
             , int cs, int dc, int rst, int busy, int clk, int mosi
             , int height , int width, int freq) 
-        {
-            spi = &spiInstance;
-            csPin = cs;
-            dcPin = dc;
-            rstPin = rst;
-            busyPin = busy;
+{
+    spi = &spiInstance;
+    cs_pin = cs;
+    dc_pin = dc;
+    rst_pin = rst;
+    busy_pin = busy;
 
-            screenHeight = height;
-            screenWidth = width;
+    screen_height = height;
+    screen_width = width;
 
-            bufferSize = (size_t)(screenHeight*screenWidth/8);
-            
-            lutValue = LUT();
+    buffer_size = (size_t)(screen_height*screen_width/8);
+    
+    lut_value = LUT();
 
+    last_config_screen = 0x00;
+    futur_config_screen = 0x00;
+    grey_detected = nullptr;
+    grey_compensation = false;
 
-            initBufferScreen();
+    initBufferScreen();
 
-            initSPIScreen(freq, clk, mosi);
-            resetScreen(); 
+    initSPIScreen(freq, clk, mosi);
+    resetScreen(); 
 
-            configScreen();
-            temperature_init();
+    configScreen();
+    temperatureInit();
 
-            cleanRam();
-            configureRam();
-            
-            sendBufferImg();
+    cleanRam();
+    configureRam();
 
-            last_config_screen = 0xF7;
-            command(CMD_ConfigUpdate, &last_config_screen, 1);
-        }
+    sendBufferImg();
+
+    last_config_screen = 0xF7;
+    command(CMD_ConfigUpdate, &last_config_screen, 1);
+}
 
         
 SSD1680::~SSD1680() {
-    delete[] bufferImg_now;
-    delete[] bufferImg_before;
-    delete[] bufferImg_between;
+    delete[] buffer_img_now;
+    delete[] buffer_img_before;
+    delete[] buffer_img_between;
+
+    delete[] buffer_accumulated_charge;
+    delete[] buffer_img_compensate_negative;
+    delete[] buffer_img_compensate_positive;
+
+    delete[] grey_detected;
 }
 
 
 
 
 
-/* -------------- Update Avalaible -------------- */
-
+/* -------------- Update Available -------------- */
 
 void SSD1680::updateBlack(){
     moveBufferImg(true);
     sendBufferImg();
-    command(CMD_LoadLut, lutValue.v_black, lutValue.size);
+    command(CMD_LoadLut, lut_value.v_black, lut_value.size);
     uint8_t data_conf[1] { DATA_CompletUpdate };
     command(CMD_ConfigUpdate, data_conf, sizeof(data_conf));
     command(CMD_StartUpdate);
@@ -72,7 +81,7 @@ void SSD1680::updateBlack(){
 void SSD1680::updateClean(){
     moveBufferImg(true);
     sendBufferImg();
-    command(CMD_LoadLut, lutValue.v_clean, lutValue.size);
+    command(CMD_LoadLut, lut_value.v_clean, lut_value.size);
     uint8_t data_conf[1] { DATA_OnlyUpdateScreen };
     command(CMD_ConfigUpdate, data_conf, sizeof(data_conf));
     command(CMD_StartUpdate);
@@ -85,17 +94,17 @@ void SSD1680::updateDiff(){
     //// Update Img ////
     sendBufferImg();
 
-    command(CMD_LoadLut, lutValue.v_diff, lutValue.size);
+    command(CMD_LoadLut, lut_value.v_diff, lut_value.size);
     uint8_t data_conf[1] { DATA_OnlyUpdateScreen };
     command(CMD_ConfigUpdate, data_conf, sizeof(data_conf));
     command(CMD_StartUpdate);
 
     //// compensate screen ////
-    updateAnalyseScreen();
+    updateAccumulateChargeScreen();
     generateCompensationBuffers();
     sendCompensateImg();
 
-    command(CMD_LoadLut, lutValue.v_compensate, lutValue.size);
+    command(CMD_LoadLut, lut_value.v_compensate, lut_value.size);
     command(CMD_ConfigUpdate, data_conf, sizeof(data_conf));
     command(CMD_StartUpdate);
 
@@ -110,8 +119,11 @@ void SSD1680::updateAlreadyLut(){
     moveBufferImg(false);
 }
 
-void SSD1680::updateLutValue(int temperature) {
-    lutValue.updateLut(temperature);
+
+void SSD1680::endUpdate() { 
+    if((last_config_screen & DATA_DisableAnalog) != DATA_DisableAnalog){ // last update has not deactivate analog
+        disableAnalog(); 
+    } 
 }
 
 
@@ -121,30 +133,30 @@ void SSD1680::updateLutValue(int temperature) {
 void SSD1680::initBufferScreen()
 {
     //// Img Buffer ////
-    bufferImg_now = new uint8_t[bufferSize];
-    bufferImg_before = new uint8_t[bufferSize];
-    bufferImg_between = new uint8_t[bufferSize];
+    buffer_img_now = new uint8_t[buffer_size];
+    buffer_img_before = new uint8_t[buffer_size];
+    buffer_img_between = new uint8_t[buffer_size];
 
-    for (size_t i = 0; i < bufferSize; ++i) {
-        bufferImg_now[i] = 0xFF; 
-        bufferImg_before[i] = 0xFF; 
-        bufferImg_between[i] = 0xFF; 
+    for (size_t i = 0; i < buffer_size; ++i) {
+        buffer_img_now[i] = 0xFF; 
+        buffer_img_before[i] = 0xFF; 
+        buffer_img_between[i] = 0xFF; 
     }
 
 
     //// Compensate Buffer ////
-    bufferImg_compensate_negatif = new uint8_t[bufferSize];
-    bufferImg_compensate_positif = new uint8_t[bufferSize];
+    buffer_img_compensate_negative = new uint8_t[buffer_size];
+    buffer_img_compensate_positive = new uint8_t[buffer_size];
 
-    for (size_t i = 0; i < bufferSize; ++i) {
-        bufferImg_compensate_positif[i] = 0x00; 
-        bufferImg_compensate_negatif[i] = 0x00; 
+    for (size_t i = 0; i < buffer_size; ++i) {
+        buffer_img_compensate_positive[i] = 0x00; 
+        buffer_img_compensate_negative[i] = 0x00; 
     }
 
-    size_t bufferSize_analyse = (size_t)screenHeight*screenWidth;
-    analyse_screen_img = new int8_t[bufferSize_analyse];
-    for (size_t i = 0; i < bufferSize_analyse; ++i) {
-        analyse_screen_img[i] = 0; 
+    size_t buffer_size_analyse = (size_t)screen_height*screen_width;
+    buffer_accumulated_charge = new int8_t[buffer_size_analyse];
+    for (size_t i = 0; i < buffer_size_analyse; ++i) {
+        buffer_accumulated_charge[i] = 0; 
     }
 }
 
@@ -158,26 +170,26 @@ void SSD1680::initSPIScreen(int freq, int clk, int mosi) {
     spi_set_format(spi, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);  // Configuration SPI : 8 bits, CPOL=0, CPHA=0
     spi_set_slave(spi, false);  
 
-    gpio_init(csPin);
-    gpio_set_dir(csPin, GPIO_OUT);
-    gpio_put(csPin, 1);  
+    gpio_init(cs_pin);
+    gpio_set_dir(cs_pin, GPIO_OUT);
+    gpio_put(cs_pin, 1);  
 
-    gpio_init(dcPin);
-    gpio_set_dir(dcPin, GPIO_OUT);
+    gpio_init(dc_pin);
+    gpio_set_dir(dc_pin, GPIO_OUT);
 
-    gpio_init(rstPin);
-    gpio_set_dir(rstPin, GPIO_OUT);
+    gpio_init(rst_pin);
+    gpio_set_dir(rst_pin, GPIO_OUT);
 
-    gpio_init(busyPin);
-    gpio_set_dir(busyPin, GPIO_IN);
+    gpio_init(busy_pin);
+    gpio_set_dir(busy_pin, GPIO_IN);
 }
 
 
 
 void SSD1680::resetScreen(){
-    gpio_put(rstPin, 0);  
+    gpio_put(rst_pin, 0);  
     sleep_ms(200);
-    gpio_put(rstPin, 1);  
+    gpio_put(rst_pin, 1);  
     sleep_ms(200);
 }
 
@@ -202,7 +214,7 @@ void SSD1680::configScreen(){
     command(CMD_BoosterSoftStart, data_BSS, sizeof(data_BSS));
     uint8_t data_DEM[1] {0x03};
     command(CMD_DataEntryMode, data_DEM, sizeof(data_DEM)); // Address mode: top to bottom, left to right
-    disableAnalog();
+    sleep_ms(100);
 }
 
 
@@ -231,32 +243,32 @@ void SSD1680::cleanRam(){
 
     // Send for RAM RED
     waitScreenReady();
-    gpio_put(csPin, 0);
+    gpio_put(cs_pin, 0);
     sendCommand(CMD_WriteRamRED);
     for (int i = 0; i < total_bytes; i += sizeof(chunk)) {
         int bytes_to_send = (total_bytes - i < sizeof(chunk)) ? (total_bytes - i) : sizeof(chunk);
         sendData(chunk, bytes_to_send);
     }
-    gpio_put(csPin, 1);
+    gpio_put(cs_pin, 1);
 
     // Send for RAM BW
     waitScreenReady();
-    gpio_put(csPin, 0);
+    gpio_put(cs_pin, 0);
     sendCommand(CMD_WriteRamBW);
     for (int i = 0; i < total_bytes; i += sizeof(chunk)) {
         int bytes_to_send = (total_bytes - i < sizeof(chunk)) ? (total_bytes - i) : sizeof(chunk);
         sendData(chunk, bytes_to_send);
     }
-    gpio_put(csPin, 1);
+    gpio_put(cs_pin, 1);
 }
 
 
 void SSD1680::configureRam(){
 
     // Size of ram we use
-    uint8_t xSize[2]{ 0x00, static_cast<uint8_t>(screenWidth/8-1)};
+    uint8_t xSize[2]{ 0x00, static_cast<uint8_t>(screen_width/8-1)};
     command(CMD_RamXSize, xSize, sizeof(xSize));
-    int y_decalage = MAX_HEIGHT_RAM - screenHeight;
+    int y_decalage = MAX_HEIGHT_RAM - screen_height;
     uint8_t ySize[4] {
         static_cast<uint8_t>(y_decalage & 0xFF), 
         static_cast<uint8_t>((y_decalage >> 8) & 0xFF), 
@@ -280,71 +292,70 @@ void SSD1680::configureRam(){
 /* -------------- Function Base -------------- */
 
 void SSD1680::waitScreenReady() {
-    while (gpio_get(busyPin)) { tight_loop_contents(); }
+    while (gpio_get(busy_pin)) { tight_loop_contents(); }
 }
 
-
-void SSD1680::sendCommand(uint8_t cmd_){ // Envoyer une commande SPI
-    gpio_put(dcPin, 0);  
+void SSD1680::sendCommand(uint8_t cmd_){
+    gpio_put(dc_pin, 0);  
     spi_write_blocking(spi, &cmd_, 1);
 }
 
-void SSD1680::sendData(const uint8_t* data, int data_size){ // Envoyer une donnée SPI
-    gpio_put(dcPin, 1); 
+void SSD1680::sendData(const uint8_t* data, int data_size){
+    gpio_put(dc_pin, 1); 
     spi_write_blocking(spi, data, data_size);
 }
 
 void SSD1680::command(uint8_t cmd_, const uint8_t *data, int data_size){
-    gestionAnalog(&cmd_, data);
+    manageAnalog(&cmd_, data);
     // wait screen finish action (in more case : Update)
     waitScreenReady();
-    gpio_put(csPin, 0);  
+    gpio_put(cs_pin, 0);  
     sendCommand(cmd_);
     if(data_size > 0) { sendData(data, data_size); }
-    gpio_put(csPin, 1);  
+    gpio_put(cs_pin, 1);  
 }
 
         
 /* -------------- Buffer images  -------------- */
 
 void SSD1680::writeImg(const uint8_t* img){
-    std::memcpy(bufferImg_now, img, bufferSize * sizeof(uint8_t));
-    compensation_grey();
-    grey_update();
+    std::memcpy(buffer_img_now, img, buffer_size * sizeof(uint8_t));
+    compensationGrey();
+    greyUpdate();
 }
 
 
-void SSD1680::moveBufferImg(bool copyOnNew){
+void SSD1680::moveBufferImg(bool copy_on_new){
     /* Exchange pos buffer */
-    uint8_t* tmp_buffer = bufferImg_before;
-    bufferImg_before = bufferImg_between;
-    bufferImg_between = bufferImg_now;
-    bufferImg_now = tmp_buffer; 
-    if(copyOnNew){ /* Copy old buffer on new buffer */
-        std::memcpy(bufferImg_now, bufferImg_before, bufferSize * sizeof(uint8_t));
-        std::memcpy(bufferImg_between, bufferImg_before, bufferSize * sizeof(uint8_t));
+    uint8_t* tmp_buffer = buffer_img_before;
+    buffer_img_before = buffer_img_between;
+    buffer_img_between = buffer_img_now;
+    buffer_img_now = tmp_buffer; 
+    if(copy_on_new){ /* Copy old buffer on new buffer */
+        std::memcpy(buffer_img_now, buffer_img_before, buffer_size * sizeof(uint8_t));
+        std::memcpy(buffer_img_between, buffer_img_before, buffer_size * sizeof(uint8_t));
     }
 }
 
 void SSD1680::sendBufferImg(){
-    command(CMD_WriteRamRED, bufferImg_before, bufferSize);
-    command(CMD_WriteRamBW, bufferImg_now, bufferSize);
+    command(CMD_WriteRamRED, buffer_img_before, buffer_size);
+    command(CMD_WriteRamBW, buffer_img_now, buffer_size);
 }
 
 void SSD1680::sendCompensateImg(){
-    command(CMD_WriteRamRED, bufferImg_compensate_negatif, bufferSize);
-    command(CMD_WriteRamBW , bufferImg_compensate_positif, bufferSize);
+    command(CMD_WriteRamRED, buffer_img_compensate_negative, buffer_size);
+    command(CMD_WriteRamBW , buffer_img_compensate_positive, buffer_size);
 }
 
 
 
 /* -------------- ControlScreen  -------------- */
 
-bool SSD1680::gestionAnalog(uint8_t *cmd_, const uint8_t *data ){
+bool SSD1680::manageAnalog(uint8_t *cmd_, const uint8_t *data ){
     /* gestion of analog if command are config screen or update */
     if(CMD_StartUpdate == *cmd_){
 
-        if ( ((last_config_screen & DATA_DisableAnalog) == DATA_DisableAnalog) && // last update has desactivate analog
+        if ( ((last_config_screen & DATA_DisableAnalog) == DATA_DisableAnalog) && // last update has deactivate analog
             ((futur_config_screen & DATA_EnableAnalog) != DATA_EnableAnalog) ) // new update need to activate analog )
         {    
             enableAnalog();
@@ -359,6 +370,7 @@ bool SSD1680::gestionAnalog(uint8_t *cmd_, const uint8_t *data ){
 }
 
 void SSD1680::enableAnalog(){
+    /* TODO: Add guard to prevent re-enabling analog power if already on (can be causes screen freeze) */
     // Turn on high-voltage circuitry to allow pixel driving
     // Must stay enabled during rapid & continuous updates to maintain speed
     uint8_t data_temp[1]{ DATA_EnableAnalog };
@@ -367,6 +379,7 @@ void SSD1680::enableAnalog(){
 }
 
 void SSD1680::disableAnalog(){
+    /* TODO: Add guard to prevent re-disabling analog power if already off (causes always screen freeze) */
     // Cut high-voltage power to save energy once display update is done
     uint8_t data_temp[1]{ DATA_DisableAnalog };
     command(CMD_ConfigUpdate, data_temp, 1);
@@ -374,7 +387,7 @@ void SSD1680::disableAnalog(){
 }
 
 
-void SSD1680::temperature_init(){
+void SSD1680::temperatureInit(){
     /* Looks like a controller bug:
         - Sending 0x00 (undocumented value) skyrockets the update speed.
         - Seems to completely disable thermal compensation.
@@ -391,46 +404,46 @@ void SSD1680::temperature_init(){
 
 /* -------------- CompensateScreen  -------------- */
 
-void SSD1680::updateAnalyseScreen()
+void SSD1680::updateAccumulateChargeScreen()
 {
-    int8_t* pAnalyse = analyse_screen_img;
+    int8_t* p_charge = buffer_accumulated_charge;
 
-    for (size_t i = 0; i < bufferSize; ++i) {
-        uint8_t now = bufferImg_now[i];
-        uint8_t diff = now ^ (bufferImg_before[i]);
+    for (size_t i = 0; i < buffer_size; ++i) {
+        uint8_t now = buffer_img_now[i];
+        uint8_t diff = now ^ (buffer_img_before[i]);
 
         for (int b = 7; b >= 0; --b) {
             uint8_t mask = (1 << b);
-            int16_t q = *pAnalyse;
+            int16_t curr_charge = *p_charge;
 
-            // 1. Décharge naturelle RC (relaxation ionique)
-            q = q - (q >> 4);
+            // Natural loss of positive charge (COM is negative in current configuration)
+            curr_charge = curr_charge - (curr_charge >> 4);
 
-            // 2. Bilan de charge selon l'état
+            // Charge balance based on pixel state
             if(grey_compensation && (grey_detected[i] & mask)){ // grey
-                if(q < LIMIT_GREY_MIN){ q = LIMIT_GREY_MIN; }
-                else if(q > LIMIT_GREY_MAX){ q = LIMIT_GREY_MAX; }
-                q -= 1;
+                if(curr_charge < LIMIT_GREY_MIN) { curr_charge = LIMIT_GREY_MIN; }
+                else if(curr_charge > LIMIT_GREY_MAX) { curr_charge = LIMIT_GREY_MAX; }
+                curr_charge -= 1;
             }
-            else if (diff & mask) { // Transition
-                if (now & mask) { // 0 -> 1 : Passage au BLANC (LUT 1 / VSL / Négatif)
-                    q += CHANGE_TO_WHITE; //-= 127; //12;
-                } else { // 1 -> 0 : Passage au NOIR (LUT 2 / VSH1 / Positif) 
-                    q += CHANGE_TO_BLACK; //+= 127; //12;
+            else if (diff & mask) { // Pixel transition
+                if (now & mask) { // 0 -> 1 : Move to White (LUT line 2)
+                    curr_charge += CHANGE_TO_WHITE;
+                } else { // 1 -> 0 : Move to Black (LUT line 3)
+                    curr_charge += CHANGE_TO_BLACK;
                 }
-            } else { // Maintien d'état
-                if (now & mask) { // 1 -> 1 : Resté BLANC (LUT 3)
-                    q -= 1;
-                } else { // 0 -> 0 : Resté NOIR (LUT 0)
-                    q += 1;
+            } else { // Keep current color
+                if (now & mask) { // 1 -> 1 : Keep White (LUT line 4)
+                    curr_charge += KEEP_WHITE;
+                } else { // 0 -> 0 : Keep Black (LUT line 1)
+                    curr_charge += KEEP_BLACK;
                 }
             }
 
-            // limit 127 -> data has storage in int8_t
-            if (q > 127) q = 127;
-            if (q < -127) q = -127;
+            // Clamp values to fit into int8_t [-127, 127]
+            if (curr_charge > 127) { curr_charge = 127; }
+            if (curr_charge < -127) { curr_charge = -127; }
 
-            *pAnalyse++ = (int8_t)q;
+            *p_charge++ = (int8_t)curr_charge;
         }
     }
 }
@@ -439,46 +452,33 @@ void SSD1680::updateAnalyseScreen()
 
 void SSD1680::generateCompensationBuffers()
 {
-    int8_t* pAnalyse = analyse_screen_img;
+    int8_t* p_charge = buffer_accumulated_charge;
 
-    // Impulsion de la LUT de compensation (1 tick G0 = 2 unités brutes = 8 en échelle x4)
-    const int8_t COMP_PULSE_CHARGE = 8; 
-
-    for (size_t i = 0; i < bufferSize; ++i) {
-        uint8_t byteNeg = 0;
-        uint8_t bytePos = 0;
+    for (size_t i = 0; i < buffer_size; ++i) {
+        uint8_t byte_neg = 0;
+        uint8_t byte_pos = 0;
 
         for (int b = 7; b >= 0; --b) {
-            int16_t val = *pAnalyse;
+            int16_t curr_charge = *p_charge;
 
-            if (val >= THRESHOLD_POS) {
-                // Pixel trop NOIR (charge positive résiduelle)
-                // -> On applique VSL (tension négative) pour blanchir légèrement
-                byteNeg |= (1 << b);
-                
-                // Soustraction physique de l'impulsion appliquée :
-                val += COMP_PULSE_CHARGE_NEG; 
-                
-                // (Option alternative : val = 0; si ton impulsion annule 100% de la charge)
+            if (curr_charge >= THRESHOLD_POS) { // Pixel too black (too positiv electricity)
+                byte_neg |= (1 << b); // Apply negativ electricity                
+                curr_charge += COMP_PULSE_CHARGE_NEG; // add charge of negativ electricity in analyse
             } 
-            else if (val <= THRESHOLD_NEG) {
-                // Pixel trop BLANC (charge négative résiduelle)
-                // -> On applique VSH1 (tension positive) pour noircir légèrement
-                bytePos |= (1 << b);
-                
-                // Ajout physique de l'impulsion appliquée :
-                val += COMP_PULSE_CHARGE_POS;
+            else if (curr_charge <= THRESHOLD_NEG) { // Pixel too white (too negativ electricity)
+                byte_pos |= (1 << b); // Apply positiv electricity                   
+                curr_charge += COMP_PULSE_CHARGE_POS; // add charge of positiv electricity in analyse
             }
 
-            // Saturation de sécurité
-            if (val > 127) val = 127;
-            if (val < -127) val = -127;
+            // Clamp values to fit into int8_t [-127, 127]
+            if (curr_charge > 127) { curr_charge = 127; }
+            if (curr_charge < -127) { curr_charge = -127; }
 
-            *pAnalyse++ = (int8_t)val;
+            *p_charge++ = (int8_t)curr_charge;
         }
 
-        bufferImg_compensate_negatif[i] = byteNeg;
-        bufferImg_compensate_positif[i] = bytePos;
+        buffer_img_compensate_negative[i] = byte_neg;
+        buffer_img_compensate_positive[i] = byte_pos;
     }
 }
 
@@ -487,16 +487,16 @@ void SSD1680::generateCompensationBuffers()
 
 /* -------------- Grey Compensation  -------------- */
 
-void SSD1680::start_greyCompensation(){ 
+void SSD1680::startGreyCompensation(){ 
     if(grey_compensation) { return; }
     grey_compensation = true; 
-    grey_detected = new uint8_t[bufferSize];
+    grey_detected = new uint8_t[buffer_size];
 
-    grey_update(); 
+    greyUpdate(); 
 }
 
 
-void SSD1680::stop_greyCompensation(){ 
+void SSD1680::stopGreyCompensation(){ 
     if(!grey_compensation) { return; }
     delete[] grey_detected;
     grey_detected = nullptr;
@@ -506,24 +506,24 @@ void SSD1680::stop_greyCompensation(){
 
 
 
-void SSD1680::grey_update(){
+void SSD1680::greyUpdate(){
     // Detection of grey color
     if(grey_compensation){
-        for (size_t i = 0; i < bufferSize; ++i) {
+        for (size_t i = 0; i < buffer_size; ++i) {
             /* grey = need to patern 0-1-0 or 1-0-1 */
-            grey_detected[i] = (bufferImg_before[i] ^ bufferImg_between[i]) & (bufferImg_between[i] ^ bufferImg_now[i]);
+            grey_detected[i] = (buffer_img_before[i] ^ buffer_img_between[i]) & (buffer_img_between[i] ^ buffer_img_now[i]);
         }
     }
 }
 
-void SSD1680::compensation_grey(){
+void SSD1680::compensationGrey(){
     // Used for try to compensate change between grey and black img
     // can provoc glich visual on black white image
     if(grey_compensation){
-        for (size_t i = 0; i < bufferSize; ++i) {
+        for (size_t i = 0; i < buffer_size; ++i) {
             /* if not grey -> Not change */
             /* if grey -> add 2 frame of update if update to black, else not change */
-            bufferImg_between[i] = bufferImg_between[i] | (grey_detected[i] & ~(bufferImg_now[i]));
+            buffer_img_between[i] = buffer_img_between[i] | (grey_detected[i] & ~(buffer_img_now[i]));
         }
     }
 }

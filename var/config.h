@@ -1,32 +1,18 @@
 #ifndef config
 #define config
 
-// SPI connector used (spi1 or spi0 on PICO)
-#define SPI_PORT spi1 
-#define CS_PIN    13
-#define DC_PIN    12
-#define RST_PIN   15
-#define BUSY_PIN  14
-#define MOSI_PIN  11
-#define CLK_PIN   10
-
-#define FREQUENCY_SPI 21*1000*1000 // 21Mhz
-
-// Screen Size
-#define HEIGHT    296
-#define WIDTH     128 // MULTIPLE OF 8 !!! if screen is not multiple of 8, round up value
-
-
 // RAM size of SSD1680
 #define MAX_HEIGHT_RAM  296
 #define MAX_WIDTH_RAM   172
 
 
 // Compensation value
-#define THRESHOLD_POS       +17 //+14   // Black
-#define THRESHOLD_NEG       -22 //-20   // White
+#define THRESHOLD_POS       +17  // Black
+#define THRESHOLD_NEG       -22  // White
 #define CHANGE_TO_BLACK     +127 
 #define CHANGE_TO_WHITE     -127
+#define KEEP_BLACK          +1
+#define KEEP_WHITE          -1
 #define LIMIT_GREY_MIN      -26
 #define LIMIT_GREY_MAX      +26
 #define COMP_PULSE_CHARGE_POS   +10
