@@ -194,6 +194,10 @@ def compress_video_to_header(input_file, output_file="video_data.h", width=128, 
     print(f"Generated array size: {total_compressed_size / 1024:.2f} KB ({(total_compressed_size / max_rom_bytes)*100:.1f}% of max allocation).")
 
 
+
+
+
+
 if __name__ == "__main__":
 
     """
@@ -208,7 +212,6 @@ if __name__ == "__main__":
     """
 
     """
-    """
     compress_video_to_header("./video/bad_apple.mp4"
                                 , output_file="../video/video_data.h"
                                 , width=128, height=296
@@ -218,9 +221,8 @@ if __name__ == "__main__":
                                 , simulate_gray=False
                             )
     """
-    """
 
-    
+    """  
     """
     compress_video_to_header("./video/Lamu.mp4"
                                 , output_file="../video/video_data.h"
@@ -231,6 +233,7 @@ if __name__ == "__main__":
                                 , simulate_gray=False
                                 , scale_factor = 0.90
                             )
+    """
     """
 
     """
@@ -246,7 +249,7 @@ if __name__ == "__main__":
                                 , scale_factor = 0.90
                             )
     """
-    
+
     """
     compress_video_to_header("./video/ZUTOMAYO.mp4"
                                 , output_file="../video/video_data.h"
@@ -258,7 +261,7 @@ if __name__ == "__main__":
                             )
     """
 
-    """
+    """    
     compress_video_to_header("./video/ZUTOMAYO.mp4"
                                 , output_file="../video/video_data.h"
                                 , width=128, height=296
@@ -270,4 +273,5 @@ if __name__ == "__main__":
                                 , light_thresh=170 
                             )
     """
+
 

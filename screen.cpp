@@ -42,18 +42,13 @@ int main() {
     gpio_set_dir(START_PIN, GPIO_IN);
     gpio_pull_down(START_PIN);
 
-    while (!gpio_get(START_PIN)) { sleep_ms(50); }
-    gpio_put(PICO_DEFAULT_LED_PIN, false);
-
-
-    printf("Init\n");
 
     SSD1680 screen = SSD1680(*SPI_PORT
                             , CS_PIN, DC_PIN, RST_PIN, BUSY_PIN, CLK_PIN, MOSI_PIN
                             , HEIGHT, WIDTH, FREQUENCY_SPI);
-    printf("is init\n");
 
-
+    while (!gpio_get(START_PIN)) { sleep_ms(50); }
+    gpio_put(PICO_DEFAULT_LED_PIN, false);
 
 
     // Screen clearing phase
