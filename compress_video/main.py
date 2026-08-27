@@ -211,7 +211,6 @@ if __name__ == "__main__":
                             )
     """
 
-    """
     compress_video_to_header("./video/bad_apple.mp4"
                                 , output_file="../video/video_data.h"
                                 , width=128, height=296
@@ -220,10 +219,8 @@ if __name__ == "__main__":
                                 , rotate_90=False
                                 , simulate_gray=False
                             )
-    """
 
     """  
-    """
     compress_video_to_header("./video/Lamu.mp4"
                                 , output_file="../video/video_data.h"
                                 , width=128, height=296
@@ -233,7 +230,6 @@ if __name__ == "__main__":
                                 , simulate_gray=False
                                 , scale_factor = 0.90
                             )
-    """
     """
 
     """
